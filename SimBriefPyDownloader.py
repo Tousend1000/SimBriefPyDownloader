@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import json
 import requests
 import tkinter as tk
@@ -15,7 +16,12 @@ except Exception:
     notification = None
 
 APP_VERSION = "1.0.3"
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "simbrief_downloader_config.json")
+def get_app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(__file__)
+
+CONFIG_PATH = os.path.join(get_app_dir(), "simbrief_downloader_config.json")
 SIMBRIEF_API_URL = "https://simbrief.com/api/xml.fetcher.php?userid={username}&json=1"
 FLIGHTPLAN_BASE_URL = "https://www.simbrief.com/ofp/flightplans/"
 FLIGHTPLAN_XML_URL = "https://www.simbrief.com/ofp/flightplans/xml/"
@@ -397,28 +403,37 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
     def load_settings(self):
         if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r") as f:
-                config = json.load(f)
-                self.username_entry.insert(0, config.get("username", ""))
-                for fmt, var in self.formats.items():
-                    var.set(fmt in config.get("formats", []))
-                for fmt, var in self.directory_vars.items():
-                    var.set(config.get("directories", {}).get(fmt, ""))
-                if "use_standard_dirs" in config:
-                    for fmt, var in self.standard_dir_vars.items():
-                        var.set(config.get("use_standard_dirs", {}).get(fmt, False))
-                if "xplane_root" in config:
-                    self.xplane_root_var.set(config.get("xplane_root", self.xplane_root_var.get()))
-                if "cleanup_days" in config:
-                    self.cleanup_days_var.set(str(config.get("cleanup_days", self.cleanup_days_var.get())))
-                if "auto_update" in config:
-                    self.auto_update_var.set(bool(config.get("auto_update")))
+            try:
+                with open(CONFIG_PATH, "r") as f:
+                    config = json.load(f)
+            except Exception as e:
+                self.log(f"Config load error: {e}")
+                return
+            self.username_entry.delete(0, tk.END)
+            self.username_entry.insert(0, config.get("username", ""))
+            for fmt, var in self.formats.items():
+                var.set(fmt in config.get("formats", []))
+            for fmt, var in self.directory_vars.items():
+                var.set(config.get("directories", {}).get(fmt, ""))
+            if "use_standard_dirs" in config:
+                for fmt, var in self.standard_dir_vars.items():
+                    var.set(config.get("use_standard_dirs", {}).get(fmt, False))
+            if "xplane_root" in config:
+                self.xplane_root_var.set(config.get("xplane_root", self.xplane_root_var.get()))
+            if "cleanup_days" in config:
+                self.cleanup_days_var.set(str(config.get("cleanup_days", self.cleanup_days_var.get())))
+            if "auto_update" in config:
+                self.auto_update_var.set(bool(config.get("auto_update")))
 
     def load_last_flight_info(self):
         if os.path.exists(CONFIG_PATH):
-            with open(CONFIG_PATH, "r") as f:
-                config = json.load(f)
-                return config.get("last_flight_info", {})
+            try:
+                with open(CONFIG_PATH, "r") as f:
+                    config = json.load(f)
+            except Exception as e:
+                self.log(f"Config load error: {e}")
+                return {}
+            return config.get("last_flight_info", {})
         return {}
 
     def toggle_auto_update(self):
