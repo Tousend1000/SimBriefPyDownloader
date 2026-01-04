@@ -15,7 +15,7 @@ try:
 except Exception:
     notification = None
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.3a"
 def get_app_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)

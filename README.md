@@ -52,6 +52,10 @@ Notes:
 
 ## Release Notes
 
+### 1.0.3a
+
+- Added `simbrief.ico` and updated PyInstaller spec for desktop builds.
+
 ### 1.0.3
 
 - Added auto-update polling with status indicator and system notifications.
