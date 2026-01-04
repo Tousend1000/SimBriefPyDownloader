@@ -4,36 +4,65 @@ SimBriefPyDownloader is a cross-platform tool to download and manage SimBrief fl
 
 ## Features
 
-- Download SimBrief flight plans in multiple formats (PDF, FMS, FF757, FF767, XPE)
-- Custom target directories
-- Flight info display
-- Automatic versioning
+- Download SimBrief flight plans in multiple formats (PDF, FMS, XPE, FF757, STSFF, TDS, Zibo, XML, MD11)
+- Per-format target directories with X-Plane standard folder support
+- Flight info display with auto-update polling option
+- Automatic file versioning
+- System notifications for new plans (optional)
 - GPL v3 licensed
 
 ## Requirements
 
-Ensure you have Python 3 and Tkinter installed.
-
-For Debian/Ubuntu:
-```bash
-sudo apt install python3 python3-tk
-```
-
-For Fedora:
-```bash
-sudo dnf install python3 python3-tkinter
-```
-
-For Arch Linux:
-```bash
-sudo pacman -S python tk
-```
-
-## Build AppImage
+Ensure you have Python 3, Tkinter, plyer, requests, and the runtime dependencies installed.
 
 ```bash
-./build-appimage.sh
+python3 -m pip install tkinter requests plyer
 ```
+
+## Build Binaries (PyInstaller)
+
+Install PyInstaller:
+
+```bash
+python3 -m pip install pyinstaller
+```
+
+Linux (one-file, windowed):
+
+```bash
+pyinstaller --onefile --windowed SimBriefPyDownloader.py
+```
+
+Windows (one-file, windowed):
+
+```powershell
+pyinstaller --onefile --windowed SimBriefPyDownloader.py
+```
+
+macOS (one-file, windowed):
+
+```bash
+pyinstaller --onefile --windowed SimBriefPyDownloader.py
+```
+
+Notes:
+
+- Output binaries are created in `dist/`.
+- Add `--icon` if you want platform-specific icons (`.ico` on Windows, `.icns` on macOS).
+
+## Release Notes
+
+### 1.0.4
+
+- Removed underscores after airport indicators in saved filenames.
+
+### 1.0.3
+
+- Added auto-update polling with status indicator and system notifications.
+- Added X-Plane root support and standard folder presets per format.
+- Added per-format tooltips and configurable cleanup age.
+- Renamed FF767 format to STSFF and adjusted filename handling for FMS/XPE.
+- Moved config storage next to the script.
 
 ## License
 

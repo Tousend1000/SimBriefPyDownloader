@@ -6,8 +6,9 @@ __pycache__/
 # Config files
 *.json
 
-# AppImage build folders
-# AppDir/
+# Build artifacts
+build/
+dist/
 *.AppImage
 
 # Pip cache
