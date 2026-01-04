@@ -52,10 +52,6 @@ Notes:
 
 ## Release Notes
 
-### 1.0.4
-
-- Removed underscores after airport indicators in saved filenames.
-
 ### 1.0.3
 
 - Added auto-update polling with status indicator and system notifications.
@@ -63,6 +59,7 @@ Notes:
 - Added per-format tooltips and configurable cleanup age.
 - Renamed FF767 format to STSFF and adjusted filename handling for FMS/XPE.
 - Moved config storage next to the script.
+- Removed underscores after airport indicators in saved files.
 
 ## License
 
