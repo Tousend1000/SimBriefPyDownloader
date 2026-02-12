@@ -2,6 +2,11 @@
 
 import os
 import sys
+import shutil
+import tempfile
+import zipfile
+import re
+import xml.etree.ElementTree as ET
 import json
 import requests
 import tkinter as tk
@@ -15,7 +20,7 @@ try:
 except Exception:
     notification = None
 
-APP_VERSION = "1.0.3a"
+APP_VERSION = "1.0.4"
 def get_app_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -91,14 +96,24 @@ class SimBriefPyDownloader:
         style.configure("TCheckbutton", background="#2b2b2b", foreground="#ffffff")
         style.configure("Horizontal.TProgressbar", troughcolor="#3c3f41", background="#61892f")
 
+        self.notebook = ttk.Notebook(root)
+        self.notebook.grid(row=0, column=0, sticky="nsew")
+        root.rowconfigure(0, weight=1)
+        root.columnconfigure(0, weight=1)
+
+        self.flightplans_frame = tk.Frame(root, bg="#2b2b2b")
+        self.airac_frame = tk.Frame(root, bg="#2b2b2b")
+        self.notebook.add(self.flightplans_frame, text="Flightplans")
+        self.notebook.add(self.airac_frame, text="AIRAC")
+
         # Flight info display
-        self.flight_info_label = ttk.Label(root, text="Flight Info: N/A", font=("Arial", 12, "bold"), foreground="#ffffff")
+        self.flight_info_label = ttk.Label(self.flightplans_frame, text="Flight Info: N/A", font=("Arial", 12, "bold"), foreground="#ffffff")
         self.flight_info_label.grid(row=0, column=0, columnspan=6, sticky='w', padx=5, pady=5)
 
         # Username
-        simbrief_label = ttk.Label(root, text="SimBrief ID:")
+        simbrief_label = ttk.Label(self.flightplans_frame, text="SimBrief ID:")
         simbrief_label.grid(row=1, column=0, sticky='w', padx=5, pady=5)
-        self.username_entry = ttk.Entry(root, width=20)
+        self.username_entry = ttk.Entry(self.flightplans_frame, width=20)
         self.username_entry.grid(row=1, column=1, padx=5, pady=5, columnspan=2)
         ToolTip(
             simbrief_label,
@@ -112,7 +127,7 @@ class SimBriefPyDownloader:
         )
 
         # Formats
-        ttk.Label(root, text="File Formats:").grid(row=2, column=0, sticky='ew', padx=2, pady=2)
+        ttk.Label(self.flightplans_frame, text="File Formats:").grid(row=2, column=0, sticky='ew', padx=2, pady=2)
         self.formats = {
             "PDF": tk.BooleanVar(),
             "FMS": tk.BooleanVar(),
@@ -156,6 +171,49 @@ class SimBriefPyDownloader:
         self._auto_update_running = False
         self._auto_update_error_ts = 0
         self._auto_update_failed = False
+        self.airac_targets = {
+            "124th ATC": {"path": "Resources/plugins/124thATC64/navdata", "rooted": True},
+            "World Traffic 2.0+": {"path": "ClassicJetSimUtils/navigraph", "rooted": True},
+            "FlightFactor 777v2": {"path": "Custom Data/STSFF/nav-data/ndbl/data", "rooted": True},
+            "X-Plane 12 native": {"path": "Custom Data", "rooted": True},
+            "X-Plane GNS430": {"path": "Custom Data/GNS430", "rooted": True},
+            "SSG (UFMC)": {"path": "Custom Data/UFMC", "rooted": True},
+            "IXEG 737 Classic Plus": {"path": "Aircraft/X-Aviation/IXEG 737 Classic Plus", "rooted": True},
+            "Rotate MD-11 Passenger": {"path": "Aircraft/Rotate-MD-11P-x12b", "rooted": True},
+            "Rotate MD-11 Freighter": {"path": "Aircraft/Rotate-MD-11F", "rooted": True},
+            "Rotate MD-80": {"path": "Aircraft/Rotate-MD-80", "rooted": True},
+            "SimToolkitPro": {"path": os.path.expanduser("~/Documents/SimToolkitPro"), "rooted": False},
+            "Little Navmap": {"path": os.path.expanduser("~/.config/ABarthel"), "rooted": False},
+        }
+        self.airac_addon_name_patterns = {
+            "X-Plane 12 native": ["x-plane 12"],
+            "X-Plane GNS430": ["x-plane gns430", "ff757/767/777"],
+            "FlightFactor 777v2": ["flightfactor boeing 777v2"],
+            "SSG (UFMC)": ["ssg"],
+            "IXEG 737 Classic Plus": ["ixeg 737 classic plus", "ixeg 737 classic"],
+            "Rotate MD-11 Passenger": ["rotate md-11"],
+            "Rotate MD-11 Freighter": ["rotate md-11"],
+            "Rotate MD-80": ["rotate md-80"],
+            "Little Navmap": ["little navmap", "little_navmap"],
+        }
+        self.airac_zip_prefixes = {
+            "124th ATC": ["124thatcv2_native_"],
+            "World Traffic 2.0+": ["worldtraffic_native_"],
+            "FlightFactor 777v2": ["ffb777v2_native_"],
+            "X-Plane 12 native": ["xplane12_native_"],
+            "X-Plane GNS430": ["xplane_customdata_native_"],
+            "SSG (UFMC)": ["ssg_native_"],
+            "IXEG 737 Classic Plus": ["ixeg737classicplus_native_"],
+            "Rotate MD-11 Passenger": ["rotate_md11_native_"],
+            "Rotate MD-11 Freighter": ["rotate_md11_native_"],
+            "Rotate MD-80": ["rotate_md80_native_"],
+            "SimToolkitPro": ["simtoolkitpro_native_"],
+            "Little Navmap": ["lnm_native_"],
+        }
+        self.airac_target_var = tk.StringVar(value="X-Plane 12 native")
+        self.airac_directory_vars = {name: tk.StringVar() for name in self.airac_targets}
+        self.airac_use_default_vars = {name: tk.BooleanVar(value=True) for name in self.airac_targets}
+        self.airac_enabled_vars = {name: tk.BooleanVar(value=True) for name in self.airac_targets}
         formats_per_row = 4
         row_base = 3
         col = 1
@@ -163,20 +221,20 @@ class SimBriefPyDownloader:
         for i, (fmt, var) in enumerate(self.formats.items()):
             r = row_base + (i // formats_per_row)
             c = 1 + (i % formats_per_row)
-            check = ttk.Checkbutton(root, text=fmt, variable=var)
+            check = ttk.Checkbutton(self.flightplans_frame, text=fmt, variable=var)
             check.grid(row=r, column=c, padx=8, pady=5, sticky='w')
             if fmt in self.format_tooltips:
                 ToolTip(check, self.format_tooltips[fmt])
 
         # Directory variables + Button zum Unterfenster
         self.directory_vars = {fmt: tk.StringVar() for fmt in self.formats}
-        target_dirs_label = ttk.Label(root, text="Target Directories:")
+        target_dirs_label = ttk.Label(self.flightplans_frame, text="Target Directories:")
         target_dirs_label.grid(row=6, column=0, sticky='w', padx=5, pady=5)
-        dir_btn = ttk.Button(root, text="📂 Target Directories…", command=self.open_directories_window)
+        dir_btn = ttk.Button(self.flightplans_frame, text="📂 Target Directories…", command=self.open_directories_window)
         dir_btn.grid(row=6, column=1, padx=5, pady=5, sticky='w', columnspan=3)
-        auto_update_check = ttk.Checkbutton(root, text="Auto-Update", variable=self.auto_update_var, command=self.toggle_auto_update)
+        auto_update_check = ttk.Checkbutton(self.flightplans_frame, text="Auto-Update", variable=self.auto_update_var, command=self.toggle_auto_update)
         auto_update_check.grid(row=6, column=4, padx=5, pady=5, sticky='e')
-        status_frame = ttk.Frame(root)
+        status_frame = ttk.Frame(self.flightplans_frame)
         status_frame.grid(row=6, column=5, padx=5, pady=5, sticky='w')
         self.status_lamp = tk.Canvas(status_frame, width=12, height=12, highlightthickness=0, bg="#2b2b2b")
         self.status_lamp.pack(side="left")
@@ -194,12 +252,12 @@ class SimBriefPyDownloader:
         ToolTip(auto_update_check, "Poll SimBrief every 30 seconds and prompt when a new plan is detected.")
 
         # Progressbar
-        self.progress = ttk.Progressbar(root, mode='determinate', length=500)
+        self.progress = ttk.Progressbar(self.flightplans_frame, mode='determinate', length=500)
         self.progress.grid(row=7, column=0, columnspan=6, padx=5, pady=10)
         ToolTip(self.progress, "Shows download progress for the current file.")
 
         # Console log
-        self.console = ScrolledText(root, height=8, bg="#1e1e1e", fg="#ffffff", insertbackground='#ffffff')
+        self.console = ScrolledText(self.flightplans_frame, height=8, bg="#1e1e1e", fg="#ffffff", insertbackground='#ffffff')
         self.console.grid(row=8, column=0, columnspan=6, padx=5, pady=5, sticky="ew")
         ToolTip(
             self.console,
@@ -207,27 +265,80 @@ class SimBriefPyDownloader:
         )
 
         # Buttons
-        save_btn = ttk.Button(root, text="Save Settings", command=self.save_settings)
+        save_btn = ttk.Button(self.flightplans_frame, text="Save Settings", command=self.save_settings)
         save_btn.grid(row=9, column=0, padx=5, pady=10)
         ToolTip(save_btn, "Save your current selections and paths to the local config file.")
 
-        download_btn = ttk.Button(root, text="🚀 Download Flightplan 🚀", command=self.download_flightplan)
+        download_btn = ttk.Button(self.flightplans_frame, text="🚀 Download Flightplan 🚀", command=self.download_flightplan)
         download_btn.grid(row=9, column=1, padx=5, pady=10, columnspan=2)
         ToolTip(download_btn, "Download the selected formats for the current SimBrief plan.")
 
         self.cleanup_days_var = tk.StringVar(value="7")
-        cleanup_days_label = ttk.Label(root, text="Cleanup days:")
+        cleanup_days_label = ttk.Label(self.flightplans_frame, text="Cleanup days:")
         cleanup_days_label.grid(row=9, column=3, padx=5, pady=10, sticky='e')
-        cleanup_days_entry = ttk.Entry(root, width=6, textvariable=self.cleanup_days_var)
+        cleanup_days_entry = ttk.Entry(self.flightplans_frame, width=6, textvariable=self.cleanup_days_var)
         cleanup_days_entry.grid(row=9, column=4, padx=5, pady=10, sticky='w')
-        clean_btn = ttk.Button(root, text="🧹 Clean Old Files", command=self.clean_old_files)
+        clean_btn = ttk.Button(self.flightplans_frame, text="🧹 Clean Old Files", command=self.clean_old_files)
         clean_btn.grid(row=9, column=5, padx=5, pady=10, sticky='e')
         ToolTip(cleanup_days_label, "Age threshold in days for cleanup.")
         ToolTip(cleanup_days_entry, "Age threshold in days for cleanup.")
         ToolTip(clean_btn, "Delete files older than the specified number of days.")
 
-        license_btn = ttk.Button(root, text="📄 License (GPL)", command=self.show_license)
-        license_btn.grid(row=10, column=0, columnspan=6, padx=5, pady=10)
+        help_btn = ttk.Button(self.flightplans_frame, text="❓ Help", command=self.show_help)
+        help_btn.grid(row=10, column=0, padx=5, pady=10, sticky='w')
+        ToolTip(help_btn, "Open a short usage guide.")
+
+        license_btn = ttk.Button(self.flightplans_frame, text="📄 License (GPL)", command=self.show_license)
+        license_btn.grid(row=11, column=0, columnspan=6, padx=5, pady=10)
+
+        # AIRAC tab UI (placeholder until Navigraph API is configured)
+        self.airac_status_var = tk.StringVar(value="Status: Not configured")
+        self.airac_installed_var = tk.StringVar(value="")
+        self.airac_installed_revision_var = tk.StringVar(value="")
+        self.airac_latest_var = tk.StringVar(value="")
+        self.airac_latest_revision_var = tk.StringVar(value="0")
+        self.airac_latest_initialized = False
+        self.airac_path_var = tk.StringVar(value="")
+        self.airac_source_var = tk.StringVar(value="")
+        self._airac_dirs_win = None
+
+        airac_title = ttk.Label(self.airac_frame, text="AIRAC (Navigraph)", font=("Arial", 12, "bold"))
+        airac_title.grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=10)
+
+        ttk.Label(self.airac_frame, textvariable=self.airac_status_var).grid(row=1, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+        self.airac_installed_label = ttk.Label(self.airac_frame, text="Installed cycle: Unknown")
+        self.airac_installed_label.grid(row=2, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+        self.airac_latest_label = ttk.Label(self.airac_frame, text="Latest cycle: Unknown")
+        self.airac_latest_label.grid(row=3, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+
+        airac_dirs_btn = ttk.Button(self.airac_frame, text="📂 Target Directories…", command=self.open_airac_directories_window)
+        airac_dirs_btn.grid(row=4, column=0, padx=10, pady=5, sticky="w")
+
+        ttk.Label(self.airac_frame, text="Source directory:").grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        airac_source_entry = ttk.Entry(self.airac_frame, width=60, textvariable=self.airac_source_var)
+        airac_source_entry.grid(row=5, column=1, padx=5, pady=5, sticky="ew")
+        airac_source_btn = ttk.Button(self.airac_frame, text="Browse", command=self.select_airac_source)
+        airac_source_btn.grid(row=5, column=2, padx=10, pady=5, sticky="e")
+
+        airac_check_btn = ttk.Button(self.airac_frame, text="Check for Updates", command=self.check_airac_update)
+        airac_check_btn.grid(row=6, column=0, padx=10, pady=10, sticky="w")
+        airac_update_btn = ttk.Button(self.airac_frame, text="Update AIRAC", command=self.update_airac)
+        airac_update_btn.grid(row=6, column=1, padx=5, pady=10, sticky="w")
+        airac_read_btn = ttk.Button(self.airac_frame, text="Read Installed AIRAC", command=self.update_installed_cycle)
+        airac_read_btn.grid(row=6, column=2, padx=10, pady=10, sticky="e")
+
+        self.airac_console = ScrolledText(self.airac_frame, height=8, bg="#1e1e1e", fg="#ffffff", insertbackground='#ffffff')
+        self.airac_console.grid(row=7, column=0, columnspan=3, padx=10, pady=5, sticky="ew")
+        ToolTip(
+            self.airac_console,
+            "Live log of AIRAC actions and errors. Useful for troubleshooting updates.",
+        )
+
+        airac_save_btn = ttk.Button(self.airac_frame, text="Save Settings", command=self.save_settings)
+        airac_save_btn.grid(row=8, column=0, padx=10, pady=10, sticky="w")
+        ToolTip(airac_save_btn, "Save your current selections and paths to the local config file.")
+
+        self.airac_frame.columnconfigure(1, weight=1)
 
         # Initial load
         self.last_flight_info = self.load_last_flight_info()
@@ -236,6 +347,7 @@ class SimBriefPyDownloader:
             self.schedule_auto_update()
         else:
             self.set_status("Idle")
+        self.update_installed_cycle(initialize_latest=True)
 
         # Keep a reference to the directories window
         self._dirs_win = None
@@ -267,6 +379,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
         text_area.pack(expand=True, fill='both')
         text_area.insert(tk.END, license_text)
         text_area.config(state='disabled')
+
+    def show_help(self):
+        help_text = (
+            "Flightplans\n"
+            "- Enter your SimBrief ID and select formats.\n"
+            "- Configure Target Directories or use standard paths.\n"
+            "- Click Download Flightplan to fetch the latest plan.\n"
+            "- Enable Auto-Update to poll every 30 seconds.\n\n"
+            "AIRAC\n"
+            "- Set X-Plane root and open Target Directories to enable targets.\n"
+            "- Choose a Source directory containing Navigraph ZIPs.\n"
+            "- Use Update AIRAC to install all enabled targets or per-target Download.\n"
+            "- Installed cycle and revision are read from .index/cycle.json files."
+        )
+        messagebox.showinfo("Help", help_text)
 
     # ---------- Neues Unterfenster für Zielverzeichnisse ----------
     def open_directories_window(self):
@@ -332,6 +459,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
         self.console.insert(tk.END, message + "\n")
         self.console.see(tk.END)
 
+    def log_airac(self, message):
+        if hasattr(self, "airac_console") and self.airac_console:
+            self.airac_console.insert(tk.END, message + "\n")
+            self.airac_console.see(tk.END)
+        self.log(message)
+
     def select_directory(self, fmt):
         directory = filedialog.askdirectory(title=f"Select target directory for {fmt}")
         if directory:
@@ -358,6 +491,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
         for fmt, var in self.standard_dir_vars.items():
             if var.get():
                 self.directory_vars[fmt].set(self.get_standard_path(fmt))
+        self.sync_airac_path()
 
     def sync_standard_controls(self):
         for fmt, check in self._dir_standard_checks.items():
@@ -385,6 +519,544 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
                 entry.state(["!readonly"])
                 browse_btn.state(["!disabled"])
 
+    def select_airac_path(self):
+        directory = filedialog.askdirectory(title="Select AIRAC install folder")
+        if directory:
+            target = self.airac_target_var.get()
+            if target in self.airac_use_default_vars:
+                self.airac_use_default_vars[target].set(False)
+                self.airac_directory_vars[target].set(directory)
+            self.airac_path_var.set(directory)
+            self.update_installed_cycle()
+
+    def select_airac_source(self):
+        directory = filedialog.askdirectory(title="Select AIRAC ZIP source directory")
+        if directory:
+            self.airac_source_var.set(directory)
+
+    def sync_airac_path(self):
+        target = self.airac_target_var.get()
+        target_info = self.airac_targets.get(target)
+        if not target_info:
+            return
+        if self.airac_use_default_vars.get(target, tk.BooleanVar(value=True)).get():
+            target_path = self.get_airac_default_path(target)
+            self.airac_directory_vars[target].set(target_path)
+        else:
+            target_path = self.airac_directory_vars.get(target, tk.StringVar(value="")).get()
+        if target_path:
+            self.airac_path_var.set(target_path)
+        self.update_installed_cycle()
+
+    def get_airac_default_path(self, target):
+        target_info = self.airac_targets.get(target)
+        if not target_info:
+            return ""
+        target_path = target_info["path"]
+        if target_info.get("rooted", True):
+            xplane_root = self.xplane_root_var.get().strip()
+            if not xplane_root:
+                return ""
+            target_path = os.path.join(xplane_root, target_path)
+        return target_path
+
+    def open_airac_directories_window(self):
+        if self._airac_dirs_win and tk.Toplevel.winfo_exists(self._airac_dirs_win):
+            self._airac_dirs_win.lift()
+            return
+
+        win = tk.Toplevel(self.root)
+        self._airac_dirs_win = win
+        win.title("AIRAC Target Directories")
+        win.configure(bg="#2b2b2b")
+        win.grab_set()
+
+        ttk.Label(win, text="Set target directory per AIRAC type").grid(row=0, column=0, columnspan=4, sticky='w', padx=10, pady=10)
+
+        self._airac_dir_entries = {}
+        self._airac_dir_browse_buttons = {}
+        self._airac_dir_checks = {}
+        self._airac_dir_enabled = {}
+        self._airac_dir_status = {}
+        self._airac_dir_download = {}
+
+        row = 1
+        for name in self.airac_targets:
+            enabled_var = self.airac_enabled_vars[name]
+            enabled_btn = ttk.Checkbutton(win, variable=enabled_var)
+            enabled_btn.grid(row=row, column=0, padx=10, pady=4, sticky='w')
+
+            ttk.Label(win, text=f"{name}:").grid(row=row, column=1, sticky='w', padx=10, pady=4)
+            entry = ttk.Entry(win, width=58, textvariable=self.airac_directory_vars[name])
+            entry.grid(row=row, column=2, padx=5, pady=4, sticky="ew")
+            browse_btn = ttk.Button(win, text="Browse", command=lambda n=name: self.select_airac_directory(n))
+            browse_btn.grid(row=row, column=4, padx=10, pady=4, sticky='e')
+
+            status_label = tk.Label(win, text="Cycle: Unknown", bg="#2b2b2b", fg="#ffffff")
+            status_label.grid(row=row, column=5, padx=10, pady=4, sticky='w')
+
+            std_var = self.airac_use_default_vars[name]
+            std_btn = ttk.Checkbutton(
+                win,
+                text="Use default",
+                variable=std_var,
+                command=lambda n=name: self.update_airac_directory_mode(n),
+            )
+            std_btn.grid(row=row, column=3, padx=5, pady=4, sticky='w')
+
+            download_btn = ttk.Button(win, text="Download", command=lambda n=name: self.update_airac_target(n))
+            download_btn.grid(row=row, column=6, padx=10, pady=4, sticky='e')
+
+            self._airac_dir_entries[name] = entry
+            self._airac_dir_browse_buttons[name] = browse_btn
+            self._airac_dir_checks[name] = std_btn
+            self._airac_dir_enabled[name] = enabled_btn
+            self._airac_dir_status[name] = status_label
+            self._airac_dir_download[name] = download_btn
+            row += 1
+
+        close_btn = ttk.Button(win, text="Close", command=win.destroy)
+        close_btn.grid(row=row, column=6, padx=10, pady=10, sticky='e')
+
+        win.columnconfigure(2, weight=1)
+        self.sync_airac_directory_controls()
+        self.update_airac_directory_statuses()
+
+    def select_airac_directory(self, name):
+        directory = filedialog.askdirectory(title=f"Select AIRAC folder for {name}")
+        if directory:
+            self.airac_use_default_vars[name].set(False)
+            self.airac_directory_vars[name].set(directory)
+            self.update_airac_directory_mode(name)
+            if self.airac_target_var.get() == name:
+                self.sync_airac_path()
+
+    def sync_airac_directory_controls(self):
+        for name in self.airac_targets:
+            self.update_airac_directory_mode(name)
+
+    def update_airac_directory_mode(self, name):
+        entry = self._airac_dir_entries.get(name)
+        browse_btn = self._airac_dir_browse_buttons.get(name)
+        use_default = self.airac_use_default_vars[name].get()
+        if entry and browse_btn:
+            if use_default:
+                self.airac_directory_vars[name].set(self.get_airac_default_path(name))
+                entry.state(["readonly"])
+                browse_btn.state(["disabled"])
+            else:
+                entry.state(["!readonly"])
+                browse_btn.state(["!disabled"])
+        if self.airac_target_var.get() == name:
+            self.sync_airac_path()
+        self.update_airac_directory_statuses()
+
+    def parse_cycle_number(self, text):
+        if not text:
+            return None
+        match = re.search(r"(\d{4})", text)
+        if match:
+            return int(match.group(1))
+        return None
+
+    def parse_revision_number(self, text):
+        if not text:
+            return None
+        match = re.search(r"(\d+)", str(text))
+        if match:
+            return int(match.group(1))
+        return None
+
+    def get_latest_cycle_number(self):
+        return self.parse_cycle_number(self.airac_latest_var.get())
+
+    def update_airac_latest_label(self):
+        latest_cycle = self.airac_latest_var.get().strip()
+        latest_revision = self.airac_latest_revision_var.get().strip()
+        if latest_cycle:
+            revision_text = latest_revision if latest_revision else "0"
+            self.airac_latest_label.config(text=f"Latest cycle: {latest_cycle}  Rev. {revision_text}")
+        else:
+            self.airac_latest_label.config(text="Latest cycle: Unknown")
+        self.update_airac_main_colors()
+
+    def update_airac_installed_label(self):
+        installed_cycle = self.airac_installed_var.get().strip()
+        installed_revision = self.airac_installed_revision_var.get().strip()
+        if installed_cycle:
+            revision_text = installed_revision if installed_revision else "0"
+            self.airac_installed_label.config(text=f"Installed cycle: {installed_cycle}  Rev. {revision_text}")
+        else:
+            self.airac_installed_label.config(text="Installed cycle: Unknown")
+        self.update_airac_main_colors()
+
+    def update_airac_main_colors(self):
+        installed_cycle = self.parse_cycle_number(self.airac_installed_var.get())
+        latest_cycle = self.get_latest_cycle_number()
+        installed_revision = self.parse_revision_number(self.airac_installed_revision_var.get())
+        latest_revision = self.parse_revision_number(self.airac_latest_revision_var.get())
+        if installed_cycle is None or latest_cycle is None:
+            self.airac_installed_label.config(foreground="#ffffff")
+            return
+        if installed_cycle == latest_cycle:
+            if installed_revision is None or latest_revision is None:
+                color = "#4CAF50"
+            elif installed_revision == latest_revision:
+                color = "#4CAF50"
+            elif installed_revision < latest_revision:
+                color = "#f0c24b"
+            else:
+                color = "#4aa3ff"
+        elif installed_cycle < latest_cycle:
+            color = "#f0c24b"
+        else:
+            color = "#4aa3ff"
+        self.airac_installed_label.config(foreground=color)
+
+    def get_airac_installed_cycle_for_target(self, name):
+        target_dir = self.get_airac_target_path(name)
+        if not target_dir or not os.path.isdir(target_dir):
+            return None
+        cycle, _revision = self.get_airac_installed_info_for_target_path(target_dir, name)
+        return cycle
+
+    def get_airac_installed_info_for_target(self, name):
+        target_dir = self.get_airac_target_path(name)
+        if not target_dir or not os.path.isdir(target_dir):
+            return None, None
+        return self.get_airac_installed_info_for_target_path(target_dir, name)
+
+    def get_airac_installed_info_for_target_path(self, target_dir, name_hint):
+        if name_hint in ("IXEG 737 Classic Plus", "Rotate MD-11 Passenger", "Rotate MD-11 Freighter", "Rotate MD-80"):
+            cycle_json = os.path.join(target_dir, "cycle.json")
+            if os.path.exists(cycle_json):
+                try:
+                    with open(cycle_json, "r") as f:
+                        data = json.load(f)
+                    cycle_num = self.parse_cycle_number(data.get("cycle"))
+                    revision_num = self.parse_revision_number(data.get("revision"))
+                    if cycle_num:
+                        return cycle_num, revision_num
+                except Exception:
+                    return None, None
+        try:
+            files = os.listdir(target_dir)
+        except Exception:
+            return None, None
+        index_files = [f for f in files if f.lower().endswith(".index")]
+        for filename in index_files:
+            file_path = os.path.join(target_dir, filename)
+            try:
+                tree = ET.parse(file_path)
+                root = tree.getroot()
+                addon_name = ""
+                addon_cycle = None
+                addon_revision = None
+                for node in root.iter("addon"):
+                    addon_name = node.attrib.get("name", "").lower()
+                    addon_cycle = node.attrib.get("cycle")
+                    addon_revision = node.attrib.get("revision")
+                    break
+
+                if self.match_airac_addon_name(name_hint, addon_name):
+                    cycle_num = self.parse_cycle_number(addon_cycle)
+                    revision_num = self.parse_revision_number(addon_revision)
+                    if cycle_num:
+                        return cycle_num, revision_num
+                self.log_airac(f"AIRAC: {name_hint} index '{filename}' addon '{addon_name}' cycle '{addon_cycle}'")
+
+                for node in root.iter():
+                    for key, value in node.attrib.items():
+                        if key.lower() == "cycle":
+                            cycle_num = self.parse_cycle_number(value)
+                            if cycle_num:
+                                revision_num = self.parse_revision_number(node.attrib.get("revision"))
+                                return cycle_num, revision_num
+            except Exception:
+                continue
+        return None, None
+
+    def match_airac_addon_name(self, name, addon_name):
+        patterns = self.airac_addon_name_patterns.get(name, [])
+        if not patterns and name:
+            patterns = [name.lower()]
+        for pattern in patterns:
+            if pattern in addon_name:
+                return True
+        return False
+
+    def update_airac_directory_statuses(self):
+        if not hasattr(self, "_airac_dir_status"):
+            return
+        if not self._airac_dirs_win or not tk.Toplevel.winfo_exists(self._airac_dirs_win):
+            return
+        latest_cycle = self.get_latest_cycle_number()
+        latest_revision = self.parse_revision_number(self.airac_latest_revision_var.get())
+        for name, label in self._airac_dir_status.items():
+            try:
+                if not label.winfo_exists():
+                    continue
+            except Exception:
+                continue
+            target_dir = self.get_airac_target_path(name)
+            installed_cycle, installed_revision = self.get_airac_installed_info_for_target(name)
+            if not installed_cycle:
+                label.config(text="Cycle: Unknown", fg="#ffffff")
+                continue
+            label_text = f"Cycle: {installed_cycle}"
+            if installed_revision is not None:
+                label_text += f" r{installed_revision}"
+            label.config(text=label_text)
+            if latest_cycle is None:
+                label.config(fg="#ffffff")
+            elif installed_cycle == latest_cycle:
+                if installed_revision is None or latest_revision is None:
+                    label.config(fg="#4CAF50")
+                elif installed_revision == latest_revision:
+                    label.config(fg="#4CAF50")
+                elif installed_revision < latest_revision:
+                    label.config(fg="#f0c24b")
+                else:
+                    label.config(fg="#4aa3ff")
+            elif installed_cycle < latest_cycle:
+                label.config(fg="#f0c24b")
+            else:
+                label.config(fg="#4aa3ff")
+
+    def update_airac_target(self, name):
+        source_dir = self.airac_source_var.get().strip()
+        if not source_dir or not os.path.isdir(source_dir):
+            messagebox.showwarning("AIRAC", "Please select a valid source directory for AIRAC ZIPs.")
+            self.log_airac("AIRAC: invalid source directory.")
+            return
+        if not self.airac_enabled_vars[name].get():
+            messagebox.showwarning("AIRAC", f"{name} is disabled in target directories.")
+            self.log_airac(f"AIRAC: skipped (disabled) -> {name}")
+            return
+
+        zip_path = self.find_airac_zip(source_dir, name)
+        if not zip_path:
+            self.log_airac(f"AIRAC: missing ZIP -> {name}")
+            messagebox.showwarning("AIRAC", f"No ZIP found for {name}.")
+            return
+
+        target_dir = self.get_airac_target_path(name)
+        if not target_dir:
+            self.log_airac(f"AIRAC: target path missing -> {name}")
+            messagebox.showwarning("AIRAC", f"No target path set for {name}.")
+            return
+
+        try:
+            self.extract_airac_zip(zip_path, target_dir)
+            self.log_airac(f"AIRAC: installed -> {name} ({os.path.basename(zip_path)})")
+            self.update_airac_directory_statuses()
+            installed_cycle, installed_revision = self.get_airac_installed_info_for_target(name)
+            latest_cycle = self.get_latest_cycle_number()
+            latest_revision = self.parse_revision_number(self.airac_latest_revision_var.get())
+            if installed_cycle and latest_cycle:
+                if installed_cycle == latest_cycle:
+                    if installed_revision is None or latest_revision is None or installed_revision == latest_revision:
+                        self.log_airac(f"AIRAC: {name} is up to date.")
+                    elif installed_revision < latest_revision:
+                        self.log_airac(f"AIRAC: {name} is behind the latest revision.")
+                    else:
+                        self.log_airac(f"AIRAC: {name} is ahead of the latest revision.")
+                elif installed_cycle < latest_cycle:
+                    self.log_airac(f"AIRAC: {name} is behind the latest cycle.")
+                else:
+                    self.log_airac(f"AIRAC: {name} is ahead of the latest cycle.")
+            messagebox.showinfo("AIRAC", f"{name} installed successfully.")
+        except Exception as e:
+            self.log_airac(f"AIRAC: install failed -> {name}: {e}")
+            messagebox.showerror("AIRAC", f"Failed to install {name}: {e}")
+
+    def update_installed_cycle(self, initialize_latest=False):
+        xplane_root = self.xplane_root_var.get().strip()
+        if not xplane_root:
+            self.airac_installed_var.set("")
+            self.airac_installed_revision_var.set("")
+            self.update_airac_installed_label()
+            self.log_airac("AIRAC: X-Plane root not set.")
+            return
+        target_dir = os.path.join(xplane_root, "Custom Data")
+        cycle_num, revision_num = self.get_airac_installed_info_for_target_path(target_dir, "X-Plane 12 native")
+        if cycle_num:
+            self.airac_installed_var.set(str(cycle_num))
+            self.airac_installed_revision_var.set("" if revision_num is None else str(revision_num))
+            self.update_airac_installed_label()
+            self.log_airac(f"AIRAC: installed cycle -> {cycle_num}")
+            if initialize_latest and not self.airac_latest_initialized:
+                self.airac_latest_var.set(str(cycle_num))
+                self.airac_latest_revision_var.set("0" if revision_num is None else str(revision_num))
+                self.update_airac_latest_label()
+                self.save_settings(silent=True)
+                self.airac_latest_initialized = True
+        else:
+            self.airac_installed_var.set("")
+            self.airac_installed_revision_var.set("")
+            self.update_airac_installed_label()
+            self.log_airac("AIRAC: installed cycle not found in .index file.")
+
+    def install_airac_zip(self):
+        target_dir = self.airac_path_var.get().strip()
+        if not target_dir:
+            messagebox.showwarning("AIRAC", "Please select an install path first.")
+            return
+        zip_path = filedialog.askopenfilename(
+            title="Select Navigraph AIRAC ZIP",
+            filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")],
+        )
+        if not zip_path:
+            return
+        try:
+            self.extract_airac_zip(zip_path, target_dir)
+            self.update_installed_cycle()
+            messagebox.showinfo("AIRAC", "AIRAC package installed successfully.")
+        except Exception as e:
+            messagebox.showerror("AIRAC", f"Failed to install AIRAC: {e}")
+
+    def extract_airac_zip(self, zip_path, target_dir):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(temp_dir)
+
+            source_dir = self.pick_airac_source_dir(temp_dir, target_dir)
+            if not source_dir:
+                raise RuntimeError("Could not determine AIRAC content folder.")
+
+            os.makedirs(target_dir, exist_ok=True)
+            self.copy_tree(source_dir, target_dir)
+
+    def pick_airac_source_dir(self, temp_dir, target_dir):
+        custom_data_root = os.path.join(temp_dir, "Custom Data")
+        target_lower = target_dir.lower()
+        target_leaf = os.path.basename(target_dir.rstrip("/\\"))
+
+        if "gns430" in target_lower:
+            for candidate in (
+                os.path.join(custom_data_root, "GNS430"),
+                os.path.join(temp_dir, "GNS430"),
+            ):
+                if os.path.isdir(candidate):
+                    return candidate
+        if "ufmc" in target_lower:
+            for candidate in (
+                os.path.join(custom_data_root, "UFMC"),
+                os.path.join(temp_dir, "UFMC"),
+            ):
+                if os.path.isdir(candidate):
+                    return candidate
+        if "stsff" in target_lower:
+            for candidate in (
+                os.path.join(custom_data_root, "STSFF"),
+                os.path.join(temp_dir, "STSFF"),
+            ):
+                if os.path.isdir(candidate):
+                    return candidate
+
+        if target_leaf:
+            for root_dir, dirs, _files in os.walk(temp_dir):
+                for dir_name in dirs:
+                    if dir_name.lower() == target_leaf.lower():
+                        return os.path.join(root_dir, dir_name)
+
+        if os.path.isdir(custom_data_root):
+            if target_dir.replace("\\", "/").endswith("/Custom Data"):
+                return custom_data_root
+            return custom_data_root
+        return temp_dir if os.path.isdir(temp_dir) else ""
+
+    def copy_tree(self, source_dir, target_dir):
+        for root_dir, dirs, files in os.walk(source_dir):
+            rel_dir = os.path.relpath(root_dir, source_dir)
+            dest_dir = target_dir if rel_dir == "." else os.path.join(target_dir, rel_dir)
+            os.makedirs(dest_dir, exist_ok=True)
+            for filename in files:
+                src_path = os.path.join(root_dir, filename)
+                dst_path = os.path.join(dest_dir, filename)
+                shutil.copy2(src_path, dst_path)
+
+    def get_airac_target_path(self, name):
+        if self.airac_use_default_vars.get(name, tk.BooleanVar(value=True)).get():
+            return self.get_airac_default_path(name)
+        return self.airac_directory_vars.get(name, tk.StringVar(value="")).get().strip()
+
+    def find_airac_zip(self, source_dir, name):
+        prefixes = self.airac_zip_prefixes.get(name, [])
+        if not prefixes:
+            return ""
+        matches = []
+        for entry in os.scandir(source_dir):
+            if not entry.is_file():
+                continue
+            filename = entry.name
+            lower = filename.lower()
+            if not lower.endswith(".zip"):
+                continue
+            if any(lower.startswith(prefix) for prefix in prefixes):
+                matches.append(entry.path)
+        if not matches:
+            return ""
+        if len(matches) == 1:
+            return matches[0]
+        return self.pick_latest_cycle_zip(matches)
+
+    def pick_latest_cycle_zip(self, paths):
+        best_path = ""
+        best_cycle = -1
+        for path in paths:
+            match = re.search(r"_(\d+)\.zip$", os.path.basename(path))
+            if match:
+                cycle = int(match.group(1))
+                if cycle > best_cycle:
+                    best_cycle = cycle
+                    best_path = path
+        return best_path or paths[0]
+
+    def check_airac_update(self):
+        self.log_airac("AIRAC: Navigraph API is not configured yet.")
+        messagebox.showinfo("AIRAC", "Navigraph API is not configured yet.")
+
+    def update_airac(self):
+        source_dir = self.airac_source_var.get().strip()
+        if not source_dir or not os.path.isdir(source_dir):
+            messagebox.showwarning("AIRAC", "Please select a valid source directory for AIRAC ZIPs.")
+            self.log_airac("AIRAC: invalid source directory.")
+            return
+
+        self.log_airac(f"AIRAC: scanning source directory -> {source_dir}")
+        installed_any = False
+        for name in self.airac_targets:
+            if not self.airac_enabled_vars[name].get():
+                self.log_airac(f"AIRAC: skipped (disabled) -> {name}")
+                continue
+
+            zip_path = self.find_airac_zip(source_dir, name)
+            if not zip_path:
+                self.log_airac(f"AIRAC: missing ZIP -> {name}")
+                continue
+
+            target_dir = self.get_airac_target_path(name)
+            if not target_dir:
+                self.log_airac(f"AIRAC: target path missing -> {name}")
+                continue
+
+            try:
+                self.extract_airac_zip(zip_path, target_dir)
+                self.log_airac(f"AIRAC: installed -> {name} ({os.path.basename(zip_path)})")
+                installed_any = True
+            except Exception as e:
+                self.log_airac(f"AIRAC: install failed -> {name}: {e}")
+
+        self.update_installed_cycle()
+        if installed_any:
+            self.log_airac("AIRAC: installation completed.")
+            messagebox.showinfo("AIRAC", "AIRAC installation completed.")
+        else:
+            self.log_airac("AIRAC: no packages installed.")
+            messagebox.showwarning("AIRAC", "No AIRAC packages were installed.")
+        self.update_airac_directory_statuses()
+
     def save_settings(self, silent=False):
         config = {
             "username": self.username_entry.get(),
@@ -394,7 +1066,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
             "xplane_root": self.xplane_root_var.get(),
             "auto_update": self.auto_update_var.get(),
             "cleanup_days": self.cleanup_days_var.get(),
-            "last_flight_info": self.last_flight_info
+            "last_flight_info": self.last_flight_info,
+            "airac_path": self.airac_path_var.get(),
+            "airac_target": self.airac_target_var.get(),
+            "airac_directories": {name: var.get() for name, var in self.airac_directory_vars.items()},
+            "airac_use_default": {name: var.get() for name, var in self.airac_use_default_vars.items()},
+            "airac_enabled": {name: var.get() for name, var in self.airac_enabled_vars.items()},
+            "airac_source": self.airac_source_var.get(),
+            "airac_latest": self.airac_latest_var.get(),
+            "airac_latest_revision": self.airac_latest_revision_var.get()
         }
         with open(CONFIG_PATH, "w") as f:
             json.dump(config, f, indent=4)
@@ -424,6 +1104,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
                 self.cleanup_days_var.set(str(config.get("cleanup_days", self.cleanup_days_var.get())))
             if "auto_update" in config:
                 self.auto_update_var.set(bool(config.get("auto_update")))
+            if "airac_path" in config:
+                self.airac_path_var.set(config.get("airac_path", ""))
+            if "airac_target" in config:
+                self.airac_target_var.set(config.get("airac_target", self.airac_target_var.get()))
+            if "airac_directories" in config:
+                for name, var in self.airac_directory_vars.items():
+                    var.set(config.get("airac_directories", {}).get(name, ""))
+            if "airac_use_default" in config:
+                for name, var in self.airac_use_default_vars.items():
+                    var.set(config.get("airac_use_default", {}).get(name, True))
+            if "airac_enabled" in config:
+                for name, var in self.airac_enabled_vars.items():
+                    var.set(config.get("airac_enabled", {}).get(name, True))
+            if "airac_source" in config:
+                self.airac_source_var.set(config.get("airac_source", ""))
+            if "airac_latest" in config:
+                self.airac_latest_var.set(config.get("airac_latest", ""))
+                self.airac_latest_initialized = True
+            if "airac_latest_revision" in config:
+                self.airac_latest_revision_var.set(str(config.get("airac_latest_revision", "0")))
+            if not self.airac_latest_revision_var.get():
+                self.airac_latest_revision_var.set("0")
+            self.update_airac_latest_label()
+            self.sync_airac_path()
 
     def load_last_flight_info(self):
         if os.path.exists(CONFIG_PATH):

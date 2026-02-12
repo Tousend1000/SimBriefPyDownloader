@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - `SimBriefPyDownloader.py` is the main Tkinter application and the primary place for feature work.
-- `simbrief.png` is used as the app icon and should stay alongside the script.
+- `simbrief.png` and `simbrief.ico` are used as app icons and should stay alongside the script.
 - `build/` and `dist/` are build artifacts (e.g., binary outputs); avoid manual edits.
 - `*.spec` files are packaging metadata (e.g., PyInstaller).
 
@@ -22,6 +22,7 @@
 
 - There is no automated test suite currently.
 - Manual checks: launch the UI, enter a SimBrief ID, select formats, download a plan, and verify saved files and progress log output.
+- For AIRAC: set an X-Plane root, pick a source directory with Navigraph ZIPs, run update or per-target install, and verify cycle/revision status.
 
 ## Commit & Pull Request Guidelines
 
@@ -30,4 +31,4 @@
 
 ## Security & Configuration Tips
 
-- User configuration is stored at `~/.simbrief_downloader_config.json`. Do not commit personal IDs or local paths.
+- User configuration is stored at `simbrief_downloader_config.json` alongside the script/binary. Do not commit personal IDs or local paths.

@@ -9,15 +9,32 @@ SimBriefPyDownloader is a cross-platform tool to download and manage SimBrief fl
 - Flight info display with auto-update polling option
 - Automatic file versioning
 - System notifications for new plans (optional)
+- AIRAC management tab with per-target directories, manual ZIP installs, and cycle/revision checks
 - GPL v3 licensed
 
 ## Requirements
 
-Ensure you have Python 3, Tkinter, plyer, requests, and the runtime dependencies installed.
+Ensure you have Python 3, Tkinter, and the runtime dependencies installed.
 
 ```bash
-python3 -m pip install tkinter requests plyer
+python3 -m pip install requests plyer
 ```
+
+## Quick Start
+
+Flightplans:
+
+- Start the app and enter your SimBrief ID.
+- Select file formats and configure Target Directories (or use standard paths).
+- Click "Download Flightplan" to fetch the latest plan.
+- Optional: enable Auto-Update to poll every 30 seconds.
+
+AIRAC:
+
+- Set the X-Plane root and open "Target Directories" to enable targets.
+- Choose a Source directory containing Navigraph ZIPs.
+- Use "Update AIRAC" to install all enabled targets or per-target Download.
+- Installed cycle/revision is read from `.index` or `cycle.json` files.
 
 ## Build Binaries (PyInstaller)
 
@@ -51,6 +68,11 @@ Notes:
 - Add `--icon` if you want platform-specific icons (`.ico` on Windows, `.icns` on macOS).
 
 ## Release Notes
+
+### 1.0.4
+
+- Added AIRAC tab with per-target directories, cycle/revision display, and manual ZIP installs.
+- Added AIRAC target status coloring and per-target install controls.
 
 ### 1.0.3a
 
